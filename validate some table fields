@@ -1,0 +1,44 @@
+[ExtensionOf(tableStr(TitanConfig))]
+final class TitanConfig_SCMedad_Extension
+{
+    public boolean validateWrite()
+    {
+        boolean ret = next validateWrite();
+        container addresses;
+        str address;
+        int i;
+
+        if(this.TitanJobStartDate == dateNull() 
+            && this.TitanJobEndDate != dateNull())
+        {
+            return checkFailed("Titan Job Start Date should be should be specefied");
+        }
+        if(this.TitanJobStartDate > this.TitanJobEndDate)
+        {
+            if(this.TitanJobEndDate == dateNull())
+            {
+                return ret;
+            }
+            return checkFailed("Titan Job Start Date should be less than end Date");
+        }
+
+        if (this.CustomerValidationErrorEmails)
+        {
+            addresses = str2con(this.CustomerValidationErrorEmails, ':');
+
+            for (i = 1; i <= conLen(addresses); i++)
+            {
+                address = strLRTrim(conPeek(addresses, i));
+
+                if (!address || !SysEmailDistributor::validateEmail(address))
+                {
+                    return checkFailed("@SCMedadLabels:CustomerValidationErrorEmailsInvalid");
+                }
+            }
+        }
+
+        return ret;
+
+    }
+
+}
