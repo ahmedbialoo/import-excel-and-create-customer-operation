@@ -1,0 +1,21 @@
+[DataContractAttribute]
+public class SCCustomerExcelImportContract implements SysOperationValidatable
+{
+    RefRecId importRunRecId;
+    [
+        DataMemberAttribute(identifierStr(ImportRunRecId)),
+        SysOperationControlVisibilityAttribute(false)
+    ]
+    public RefRecId parmImportRunRecId(RefRecId _importRunRecId = importRunRecId)
+    {
+        importRunRecId = _importRunRecId;
+        return importRunRecId;
+    }
+
+    public boolean validate()
+    {
+        return importRunRecId != 0
+            || checkFailed("@SCMedadLabels:ExcelFileRequired");
+    }
+
+}
