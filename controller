@@ -1,0 +1,39 @@
+public class SCCustomerCreateController extends SysOperationServiceController
+{
+    public static SCCustomerCreateController construct(Args _args = null)
+    {
+        SCCustomerCreateController controller = new SCCustomerCreateController(
+            classStr(SCCustomerCreateService),
+            methodStr(SCCustomerCreateService, process),
+            SysOperationExecutionMode::Synchronous);
+        SCCustomerCreateContract contract = controller.getDataContractInfoObject().dataContractObject();
+        SCAutomatedImportCustomers staging;
+
+        controller.parmArgs(_args);
+        controller.parmLoadFromSysLastValue(false);
+
+        if (_args && _args.dataset() == tableNum(SCAutomatedImportCustomers))
+        {
+            staging = _args.record();
+
+            if (staging.RecId)
+            {
+                contract.parmStagingRecId(staging.RecId);
+                controller.parmShowDialog(false);
+            }
+        }
+
+        return controller;
+    }
+
+    public static void main(Args _args)
+    {
+        SCCustomerCreateController::construct(_args).startOperation();
+    }
+
+    public str defaultCaption()
+    {
+        return "@SCMedadLabels:CreateCustomers";
+    }
+
+}
