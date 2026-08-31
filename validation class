@@ -1,0 +1,55 @@
+public final class SCCustomerValidate
+{
+    /// <summary>
+    /// Revalidates one staged customer and writes the resulting <c>Status</c> value.
+    /// </summary>
+    /// <param name = "_stagingRecId">
+    /// The record ID of the staged customer.
+    /// </param>
+    /// <returns>
+    /// true if the record exists, is not already created, and passed every validation; otherwise, false.
+    /// </returns>
+    public static boolean validateRecord(RecId _stagingRecId)
+    {
+        SCAutomatedImportCustomers staging;
+        boolean isValid;
+
+        if (!_stagingRecId)
+        {
+            return false;
+        }
+
+        ttsbegin;
+
+        select firstonly forupdate staging
+            where staging.RecId == _stagingRecId;
+
+        if (!staging.RecId || staging.isCustomerCreated())
+        {
+            ttsabort;
+            return false;
+        }
+
+        isValid = staging.validateCustomerData();
+        staging.update();
+
+        ttscommit;
+
+        return isValid;
+    }
+
+    /// <summary>
+    /// Revalidates every staged customer that has not already been created.
+    /// </summary>
+    public static void validatePendingRecords()
+    {
+        SCAutomatedImportCustomers staging;
+
+        while select RecId from staging
+            where staging.CreationStatus != SCCustomerCreationStatus::Created
+        {
+            SCCustomerValidate::validateRecord(staging.RecId);
+        }
+    }
+
+}
