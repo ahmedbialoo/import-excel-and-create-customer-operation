@@ -1,0 +1,7 @@
+overview:
+1. import excel file into staging table.
+2. the impot is dynamic based on mapping form
+3. a button that generate fields to the form instead of creation record map one by one
+4. validations on imported records and type message in status field
+5. creation customer job is a job or per selected record
+6. email sent with the faild validations to predefined email
