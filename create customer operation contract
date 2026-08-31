@@ -1,0 +1,20 @@
+[DataContractAttribute]
+public class SCCustomerCreateContract implements SysOperationValidatable
+{
+    RefRecId stagingRecId;
+    [
+        DataMemberAttribute(identifierStr(StagingRecId)),
+        SysOperationControlVisibilityAttribute(false)
+    ]
+    public RefRecId parmStagingRecId(RefRecId _stagingRecId = stagingRecId)
+    {
+        stagingRecId = _stagingRecId;
+        return stagingRecId;
+    }
+
+    public boolean validate()
+    {
+        return true;
+    }
+
+}
