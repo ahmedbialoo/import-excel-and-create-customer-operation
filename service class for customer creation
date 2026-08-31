@@ -1,0 +1,571 @@
+public class SCCustomerCreateService extends SysOperationServiceBase
+{
+    #define.DefaultCurrency('SAR')
+    #define.DefaultCountryRegionId('SAU')
+    #define.DefaultCustomerGroup('10')
+    #define.ValidStatus('Valid')
+    #define.CRNRegistrationType('CRN')
+    #define.VATRegistrationType('VAT')
+    #define.SAUCountryRegionId('SAU')
+    #define.CenterBranchDimension('Center_Branch')
+    private str currentErrorText()
+    {
+        int line = infolog.line();
+        str text = line ? infolog.text(line) : '';
+
+        if (!text)
+        {
+            text = "@SCMedadLabels:CustomerCreateFailed";
+        }
+
+        return subStr(text, 1, 500);
+    }
+
+    private void addRunError(
+        List                         _errors,
+        SCAutomatedImportCustomers  _staging,
+        str                          _category,
+        str                          _message)
+    {
+        if (!_errors)
+        {
+            return;
+        }
+
+        _errors.addEnd(strFmt(
+            "%1 | %2 | %3 | %4",
+            _category,
+            _staging.Dyn365CustomerCode,
+            _staging.ClientName,
+            _message));
+    }
+
+    private void sendRunErrors(List _errors)
+    {
+        TitanConfig titanConfig;
+        SysMailerMessageBuilder messageBuilder;
+        ListEnumerator errorEnumerator;
+        container recipients;
+        str recipient;
+        str body;
+        int i;
+
+        if (!_errors || !_errors.elements())
+        {
+            return;
+        }
+
+        titanConfig = TitanConfig::Find();
+        if (!titanConfig.CustomerValidationErrorEmails)
+        {
+            return;
+        }
+
+        body = "@SCMedadLabels:CustomerValidationErrorsEmailHeading" + '\r\n\r\n';
+        errorEnumerator = _errors.getEnumerator();
+
+        while (errorEnumerator.moveNext())
+        {
+            body += errorEnumerator.current() + '\r\n';
+        }
+
+        try
+        {
+            messageBuilder = new SysMailerMessageBuilder();
+            recipients = str2con(titanConfig.CustomerValidationErrorEmails, ':');
+
+            for (i = 1; i <= conLen(recipients); i++)
+            {
+                recipient = strLRTrim(conPeek(recipients, i));
+                if (recipient)
+                {
+                    messageBuilder.addTo(recipient);
+                }
+            }
+
+            messageBuilder.setSubject("@SCMedadLabels:CustomerValidationErrorsEmailSubject");
+            messageBuilder.setBody(body, false);
+
+            if (!SysMailerFactory::sendNonInteractive(messageBuilder.getMessage()))
+            {
+                warning("@SCMedadLabels:CustomerValidationErrorsEmailSendFailed");
+            }
+        }
+        catch
+        {
+            warning("@SCMedadLabels:CustomerValidationErrorsEmailSendFailed");
+        }
+    }
+
+    private void updateCreationResult(
+        RecId                    _stagingRecId,
+        SCCustomerCreationStatus _status,
+        str                      _message)
+    {
+        SCAutomatedImportCustomers staging;
+
+        ttsbegin;
+
+        select firstonly forupdate staging
+            where staging.RecId == _stagingRecId;
+
+        if (staging.RecId)
+        {
+            staging.CreationStatus = _status;
+            staging.CreationMessage = subStr(_message, 1, 500);
+            staging.update();
+        }
+
+        ttscommit;
+    }
+
+    private void createElectronicAddress(
+        DirParty                                 _dirParty,
+        LogisticsElectronicAddressMethodType     _type,
+        str                                      _locator,
+        DirPartyName                             _locationName)
+    {
+        DirPartyContactInfoView contactView;
+
+        if (!_locator)
+        {
+            return;
+        }
+
+        contactView.Party = _dirParty.getPartyRecId();
+        contactView.Type = _type;
+        contactView.Locator = _locator;
+        contactView.LocationName = _locationName;
+        contactView.IsPrimary = NoYes::Yes;
+
+        _dirParty.createOrUpdateContactInfo(contactView);
+    }
+
+    private container postalAddressRoles()
+    {
+        container roles;
+        RecId     roleRecId;
+
+        roleRecId = LogisticsLocationRole::findBytype(LogisticsLocationRoleType::Business).RecId;
+        if (roleRecId)
+        {
+            roles += roleRecId;
+        }
+
+        roleRecId = LogisticsLocationRole::findBytype(LogisticsLocationRoleType::Delivery).RecId;
+        if (roleRecId)
+        {
+            roles += roleRecId;
+        }
+
+        roleRecId = LogisticsLocationRole::findBytype(LogisticsLocationRoleType::Invoice).RecId;
+        if (roleRecId)
+        {
+            roles += roleRecId;
+        }
+
+        return roles;
+    }
+
+    private str customerCountryRegionId(SCAutomatedImportCustomers _staging)
+    {
+        return _staging.CountryRegionId
+            ? _staging.CountryRegionId
+            : #DefaultCountryRegionId;
+    }
+
+    private DirPartyPostalAddressView createPostalAddress(DirParty _dirParty, SCAutomatedImportCustomers _staging)
+    {
+        DirPartyPostalAddressView postalAddressView;
+        LogisticsPostalAddress postalAddress;
+        LogisticsLocation logisticsLocation;
+        DirPartyLocation dirPartyLocation;
+        DirPartyLocationEntity partyLocationEntity;
+        DirPartyLocationContract partyLocationContract;
+        SCGeneralService cityService = new SCGeneralService();
+        str cityName;
+        str countryRegionId;
+
+        cityName = cityService.cityNameMapping(_staging.City);
+        if (!cityName)
+        {
+            cityName = _staging.City;
+        }
+
+        countryRegionId = this.customerCountryRegionId(_staging);
+
+        if (!LogisticsAddressCountryRegion::exist(countryRegionId))
+        {
+            throw error(strFmt("@SCMedadLabels:CountryRegionNotFound", countryRegionId));
+        }
+
+        logisticsLocation = LogisticsLocation::create(_staging.ClientName, true);
+
+        postalAddress.clear();
+        postalAddress.Location = logisticsLocation.RecId;
+        postalAddress.CountryRegionId = countryRegionId;
+        postalAddress.Street = _staging.Street ? _staging.Street : _staging.streetInDynamics();
+        postalAddress.City = cityName;
+        postalAddress.ZipCode = _staging.ZipCode;
+        postalAddress.ValidFrom = DateTimeUtil::utcNow();
+        postalAddress.ValidTo = DateTimeUtil::maxValue();
+        postalAddress.formatAddressInstance();
+
+        if (!postalAddress.validateWrite())
+        {
+            throw error(this.currentErrorText());
+        }
+
+        postalAddress.insert();
+
+        if (!postalAddress.RecId || !postalAddress.Location)
+        {
+            throw error("@SCMedadLabels:CustomerAddressCreateFailed");
+        }
+
+        partyLocationEntity = DirPartyLocationEntity::construct(_dirParty.getPartyRecId(), postalAddress.Location);
+        partyLocationContract = new DirPartyLocationContract();
+        partyLocationContract.parmIsPrimary(true);
+        partyLocationContract.parmIsPrivate(false);
+        partyLocationContract.parmIsPostalAddress(true);
+        partyLocationContract.parmRoleIds(this.postalAddressRoles());
+        partyLocationEntity.createOrUpdatePartyLocation(partyLocationContract);
+
+        dirPartyLocation = DirPartyLocation::findByPartyLocation(_dirParty.getPartyRecId(), postalAddress.Location);
+
+        if (!dirPartyLocation.RecId)
+        {
+            throw error("@SCMedadLabels:PartyLocationNotFound");
+        }
+
+        if (!dirPartyLocation.IsPostalAddress || !dirPartyLocation.IsPrimary)
+        {
+            dirPartyLocation.selectForUpdate(true);
+            dirPartyLocation.IsPostalAddress = NoYes::Yes;
+            dirPartyLocation.IsPrimary = NoYes::Yes;
+            dirPartyLocation.update();
+        }
+
+        postalAddressView.clear();
+        postalAddressView.Party = _dirParty.getPartyRecId();
+        postalAddressView.Location = postalAddress.Location;
+
+        return postalAddressView;
+    }
+
+    private void applyCenterBranchDimension(CustTable _custTable, str _branchCode)
+    {
+        DimensionAttribute dimensionAttribute;
+        DimensionAttributeValue dimensionAttributeValue;
+        DimensionAttributeValueSetStorage storage;
+
+        if (!_branchCode)
+        {
+            return;
+        }
+
+        dimensionAttribute = DimensionAttribute::findByName(#CenterBranchDimension);
+
+        if (!dimensionAttribute.RecId)
+        {
+            throw error(strFmt("@SCMedadLabels:FinancialDimensionNotFound", #CenterBranchDimension));
+        }
+
+        dimensionAttributeValue = DimensionAttributeValue::findByDimensionAttributeAndValue(dimensionAttribute, _branchCode);
+
+        if (!dimensionAttributeValue.RecId)
+        {
+            throw error(strFmt("@SCMedadLabels:FinancialDimensionValueNotFound", #CenterBranchDimension, _branchCode));
+        }
+
+        storage = _custTable.DefaultDimension
+            ? DimensionAttributeValueSetStorage::find(_custTable.DefaultDimension)
+            : new DimensionAttributeValueSetStorage();
+
+        storage.addItem(dimensionAttributeValue);
+        _custTable.DefaultDimension = storage.save();
+    }
+
+    private void createTaxRegistration(
+        DirPartyRecId            _party,
+        LogisticsLocationRecId   _location,
+        str                      _registrationNumber,
+        str                      _registrationType,
+        str                      _countryRegionId)
+    {
+        TaxRegistrationType taxRegistrationType;
+        TaxRegistrationTypeApplicabilityRule taxRegistrationTypeApplicabilityRule;
+        DirPartyLocation dirPartyLocation;
+        TaxRegistration taxRegistration;
+
+        if (!_registrationNumber)
+        {
+            return;
+        }
+
+        taxRegistrationType = TaxRegistrationType::findByType(_registrationType);
+
+        if (!taxRegistrationType.RecId)
+        {
+            throw error(strFmt("@SCMedadLabels:TaxRegistrationTypeNotFound", _registrationType));
+        }
+
+        taxRegistrationTypeApplicabilityRule = TaxRegistrationTypeApplicabilityRule::findByTypeCountryId(
+            taxRegistrationType.RecId,
+            _countryRegionId);
+
+        if (!taxRegistrationTypeApplicabilityRule.RecId)
+        {
+            throw error(strFmt(
+                "@SCMedadLabels:TaxRegistrationRuleNotFound",
+                _registrationType,
+                _countryRegionId));
+        }
+
+        if (_location)
+        {
+            dirPartyLocation = DirPartyLocation::findByPartyLocation(_party, _location);
+        }
+
+        if (!dirPartyLocation.RecId)
+        {
+            dirPartyLocation = DirPartyLocation::findPrimaryPartyLocation(_party);
+        }
+
+        if (!dirPartyLocation.RecId)
+        {
+            dirPartyLocation = DirPartyLocation::findOrCreate(_party, 0);
+        }
+
+        if (!dirPartyLocation.RecId)
+        {
+            throw error("@SCMedadLabels:PartyLocationNotFound");
+        }
+
+        taxRegistration.clear();
+        taxRegistration.validTimeStateUpdateMode(ValidTimeStateUpdate::CreateNewTimePeriod);
+        taxRegistration.initValue();
+        taxRegistration.DirPartyLocation = dirPartyLocation.RecId;
+        taxRegistration.TaxRegistrationTypeApplicabilityRule = taxRegistrationTypeApplicabilityRule.RecId;
+        taxRegistration.RegistrationNumber = _registrationNumber;
+        taxRegistration.ValidFrom = DateTimeUtil::getSystemDate(DateTimeUtil::getUserPreferredTimeZone());
+        taxRegistration.ValidTo = maxDate();
+        taxRegistration.insert();
+    }
+
+    private void createCustomer(SCAutomatedImportCustomers _staging)
+    {
+        DirPartyTable dirPartyTable;
+        DirParty dirParty;
+        DirPartyPostalAddressView postalAddressView;
+        CustTable custTable;
+        CustGroup custGroup;
+        DirPartyType partyType;
+        str countryRegionId;
+
+        custGroup = CustGroup::find(#DefaultCustomerGroup);
+
+        if (!custGroup.RecId)
+        {
+            throw error(strFmt("@SCMedadLabels:CustomerGroupNotFound", #DefaultCustomerGroup));
+        }
+
+        partyType = strUpr(strLRTrim(_staging.CustomerType)) == 'ORGANIZATION'
+            ? DirPartyType::Organization
+            : DirPartyType::Person;
+        countryRegionId = this.customerCountryRegionId(_staging);
+
+        dirPartyTable = DirPartyTable::createNew(partyType, _staging.ClientName);
+
+        custTable.clear();
+        custTable.initValue();
+        custTable.AccountNum = _staging.Dyn365CustomerCode;
+        custTable.CustGroup = custGroup.CustGroup;
+        custTable.initFromCustGroup(custGroup);
+        custTable.Currency = #DefaultCurrency;
+        custTable.VATNum = _staging.VATNumber;
+        custTable.ZatcaReqNumber = _staging.VATNumber;
+        custTable.Party = dirPartyTable.RecId;
+        this.applyCenterBranchDimension(custTable, _staging.Dyn365BranchCode);
+        custTable.insert();
+
+        dirParty = DirParty::constructFromPartyRecId(custTable.Party);
+        postalAddressView = this.createPostalAddress(dirParty, _staging);
+        this.createElectronicAddress(dirParty, LogisticsElectronicAddressMethodType::Phone, _staging.Phone, _staging.ClientName);
+        this.createElectronicAddress(dirParty, LogisticsElectronicAddressMethodType::Email, _staging.Email, _staging.ClientName);
+        this.createElectronicAddress(dirParty, LogisticsElectronicAddressMethodType::Fax, _staging.Fax, _staging.ClientName);
+        this.createTaxRegistration(
+            custTable.Party,
+            postalAddressView.Location,
+            _staging.CRNumber,
+            #CRNRegistrationType,
+            #SAUCountryRegionId);
+
+        if (strUpr(countryRegionId) == #SAUCountryRegionId)
+        {
+            this.createTaxRegistration(
+                custTable.Party,
+                postalAddressView.Location,
+                _staging.VATNumber,
+                #VATRegistrationType,
+                #SAUCountryRegionId);
+        }
+    }
+
+    private boolean processRecord(RecId _stagingRecId)
+    {
+        SCAutomatedImportCustomers staging;
+        CustTable custTable;
+        boolean created = false;
+
+        select firstonly staging
+            where staging.RecId == _stagingRecId;
+
+        if (!staging.RecId)
+        {
+            return false;
+        }
+
+        try
+        {
+            if (CustTable::find(staging.Dyn365CustomerCode).RecId)
+            {
+                this.updateCreationResult(
+                    staging.RecId,
+                    SCCustomerCreationStatus::Created,
+                    "@SCMedadLabels:CustomerAlreadyExistsInCustTable");
+                return true;
+            }
+
+            ttsbegin;
+            this.createCustomer(staging);
+            ttscommit;
+
+            this.updateCreationResult(
+                staging.RecId,
+                SCCustomerCreationStatus::Created,
+                "@SCMedadLabels:CustomerCreatedSuccessfully");
+            created = true;
+        }
+        catch (Exception::Error)
+        {
+            this.updateCreationResult(
+                staging.RecId,
+                SCCustomerCreationStatus::Error,
+                this.currentErrorText());
+        }
+        catch
+        {
+            this.updateCreationResult(
+                staging.RecId,
+                SCCustomerCreationStatus::Error,
+                this.currentErrorText());
+        }
+
+        return created;
+    }
+
+    public void process(SCCustomerCreateContract _contract)
+    {
+        SCAutomatedImportCustomers staging;
+        SCAutomatedImportCustomers resultStaging;
+        List runErrors = new List(Types::String);
+        int created;
+        int errors;
+
+        if (_contract.parmStagingRecId())
+        {
+            SCCustomerValidate::validateRecord(_contract.parmStagingRecId());
+
+            select firstonly staging
+                where staging.RecId == _contract.parmStagingRecId();
+
+            if (!staging.RecId)
+            {
+                throw error("@SCMedadLabels:CustomerCreateFailed");
+            }
+
+            if (staging.Status != #ValidStatus)
+            {
+                this.updateCreationResult(
+                    staging.RecId,
+                    SCCustomerCreationStatus::Error,
+                    "@SCMedadLabels:SelectedCustomerNotValid");
+                this.addRunError(
+                    runErrors,
+                    staging,
+                    "@SCMedadLabels:CustomerValidationErrorCategory",
+                    staging.Status);
+                this.sendRunErrors(runErrors);
+                throw error("@SCMedadLabels:SelectedCustomerNotValid");
+            }
+
+            if (this.processRecord(staging.RecId))
+            {
+                created++;
+            }
+            else
+            {
+                errors++;
+
+                select firstonly resultStaging
+                    where resultStaging.RecId == staging.RecId;
+
+                this.addRunError(
+                    runErrors,
+                    resultStaging,
+                    "@SCMedadLabels:CustomerCreationErrorCategory",
+                    resultStaging.CreationMessage);
+            }
+        }
+        else
+        {
+            SCCustomerValidate::validatePendingRecords();
+
+            while select staging
+                where staging.Status != #ValidStatus
+                   && staging.CreationStatus != SCCustomerCreationStatus::Created
+            {
+                this.addRunError(
+                    runErrors,
+                    staging,
+                    "@SCMedadLabels:CustomerValidationErrorCategory",
+                    staging.Status);
+            }
+
+            while select staging
+                where staging.Status == #ValidStatus
+                   && staging.CreationStatus != SCCustomerCreationStatus::Created
+            {
+                if (this.processRecord(staging.RecId))
+                {
+                    created++;
+                }
+                else
+                {
+                    errors++;
+
+                    select firstonly resultStaging
+                        where resultStaging.RecId == staging.RecId;
+
+                    this.addRunError(
+                        runErrors,
+                        resultStaging,
+                        "@SCMedadLabels:CustomerCreationErrorCategory",
+                        resultStaging.CreationMessage);
+                }
+            }
+
+            if (!created && !errors)
+            {
+                this.sendRunErrors(runErrors);
+                info("@SCMedadLabels:NoValidCustomersToProcess");
+                return;
+            }
+        }
+
+        this.sendRunErrors(runErrors);
+        info(strFmt("@SCMedadLabels:CustomerCreateSummary", created, errors));
+    }
+
+}
