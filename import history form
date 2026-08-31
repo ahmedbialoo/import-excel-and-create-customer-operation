@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AxForm xmlns:i="http://www.w3.org/2001/XMLSchema-instance" xmlns="Microsoft.Dynamics.AX.Metadata.V6">
+	<Name>SCCustomerExcelImportHistory</Name>
+	<SourceCode>
+		<Methods xmlns="">
+			<Method>
+				<Name>classDeclaration</Name>
+				<Source><![CDATA[
+[Form]
+public class SCCustomerExcelImportHistory extends FormRun
+{
+}
+]]></Source>
+			</Method>
+		</Methods>
+		<DataSources xmlns="" />
+		<DataControls xmlns="" />
+		<Members xmlns="" />
+	</SourceCode>
+	<DataSources>
+		<AxFormDataSource xmlns="">
+			<Name>SCCustomerExcelImportRun</Name>
+			<Table>SCCustomerExcelImportRun</Table>
+			<Fields>
+				<AxFormDataSourceField><DataField>FileName</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>Status</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>TotalRows</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>SuccessfulRows</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>SkippedRows</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>FailedRows</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>Message</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>CreatedBy</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>CreatedDateTime</DataField></AxFormDataSourceField>
+			</Fields>
+			<ReferencedDataSources />
+			<InsertIfEmpty>No</InsertIfEmpty>
+			<DataSourceLinks />
+			<DerivedDataSources />
+		</AxFormDataSource>
+		<AxFormDataSource xmlns="">
+			<Name>SCCustomerExcelImportLog</Name>
+			<Table>SCCustomerExcelImportLog</Table>
+			<Fields>
+				<AxFormDataSourceField><DataField>SourceRowNumber</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>CustomerAccount</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>Outcome</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>Message</DataField></AxFormDataSourceField>
+				<AxFormDataSourceField><DataField>CreatedDateTime</DataField></AxFormDataSourceField>
+			</Fields>
+			<ReferencedDataSources />
+			<JoinSource>SCCustomerExcelImportRun</JoinSource>
+			<InsertIfEmpty>No</InsertIfEmpty>
+			<DataSourceLinks />
+			<DerivedDataSources />
+		</AxFormDataSource>
+	</DataSources>
+	<Design>
+		<Caption xmlns="">@SCMedadLabels:CustomerExcelImportHistory</Caption>
+		<DataSource xmlns="">SCCustomerExcelImportRun</DataSource>
+		<Pattern xmlns="">Custom</Pattern>
+		<Style xmlns="">SimpleList</Style>
+		<Controls xmlns="">
+			<AxFormControl xmlns="" i:type="AxFormActionPaneControl">
+				<Name>ActionPane</Name>
+				<Type>ActionPane</Type>
+				<FormControlExtension i:nil="true" />
+				<Controls />
+			</AxFormControl>
+			<AxFormControl xmlns="" i:type="AxFormGridControl">
+				<Name>RunsGrid</Name>
+				<Type>Grid</Type>
+				<FormControlExtension i:nil="true" />
+				<Controls>
+					<AxFormControl xmlns="" i:type="AxFormStringControl">
+						<Name>RunFileName</Name>
+						<Type>String</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>FileName</DataField>
+						<DataSource>SCCustomerExcelImportRun</DataSource>
+					</AxFormControl>
+					<AxFormControl xmlns="" i:type="AxFormStringControl">
+						<Name>RunStatus</Name>
+						<Type>String</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>Status</DataField>
+						<DataSource>SCCustomerExcelImportRun</DataSource>
+					</AxFormControl>
+					<AxFormControl xmlns="" i:type="AxFormIntegerControl">
+						<Name>TotalRows</Name>
+						<Type>Integer</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>TotalRows</DataField>
+						<DataSource>SCCustomerExcelImportRun</DataSource>
+					</AxFormControl>
+					<AxFormControl xmlns="" i:type="AxFormIntegerControl">
+						<Name>SuccessfulRows</Name>
+						<Type>Integer</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>SuccessfulRows</DataField>
+						<DataSource>SCCustomerExcelImportRun</DataSource>
+					</AxFormControl>
+					<AxFormControl xmlns="" i:type="AxFormIntegerControl">
+						<Name>SkippedRows</Name>
+						<Type>Integer</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>SkippedRows</DataField>
+						<DataSource>SCCustomerExcelImportRun</DataSource>
+					</AxFormControl>
+					<AxFormControl xmlns="" i:type="AxFormIntegerControl">
+						<Name>FailedRows</Name>
+						<Type>Integer</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>FailedRows</DataField>
+						<DataSource>SCCustomerExcelImportRun</DataSource>
+					</AxFormControl>
+					<AxFormControl xmlns="" i:type="AxFormStringControl">
+						<Name>RunMessage</Name>
+						<Type>String</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>Message</DataField>
+						<DataSource>SCCustomerExcelImportRun</DataSource>
+					</AxFormControl>
+				</Controls>
+				<DataSource>SCCustomerExcelImportRun</DataSource>
+				<Style>Tabular</Style>
+			</AxFormControl>
+			<AxFormControl xmlns="" i:type="AxFormGridControl">
+				<Name>LogsGrid</Name>
+				<Type>Grid</Type>
+				<FormControlExtension i:nil="true" />
+				<Controls>
+					<AxFormControl xmlns="" i:type="AxFormIntegerControl">
+						<Name>LogRowNumber</Name>
+						<Type>Integer</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>SourceRowNumber</DataField>
+						<DataSource>SCCustomerExcelImportLog</DataSource>
+					</AxFormControl>
+					<AxFormControl xmlns="" i:type="AxFormStringControl">
+						<Name>LogCustomerAccount</Name>
+						<Type>String</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>CustomerAccount</DataField>
+						<DataSource>SCCustomerExcelImportLog</DataSource>
+					</AxFormControl>
+					<AxFormControl xmlns="" i:type="AxFormStringControl">
+						<Name>LogOutcome</Name>
+						<Type>String</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>Outcome</DataField>
+						<DataSource>SCCustomerExcelImportLog</DataSource>
+					</AxFormControl>
+					<AxFormControl xmlns="" i:type="AxFormStringControl">
+						<Name>LogMessage</Name>
+						<Type>String</Type>
+						<FormControlExtension i:nil="true" />
+						<DataField>Message</DataField>
+						<DataSource>SCCustomerExcelImportLog</DataSource>
+					</AxFormControl>
+				</Controls>
+				<DataSource>SCCustomerExcelImportLog</DataSource>
+				<Style>Tabular</Style>
+			</AxFormControl>
+		</Controls>
+	</Design>
+	<Parts />
+</AxForm>
