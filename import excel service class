@@ -1,0 +1,338 @@
+using System.IO;
+using OfficeOpenXml;
+
+public class SCCustomerExcelImportService extends SysOperationServiceBase
+{
+    private str cellText(OfficeOpenXml.ExcelRange _range, int _row, int _column)
+    {
+        return strLRTrim(any2Str(_range.get_Item(_row, _column).value));
+    }
+
+    private Map buildHeaderColumns(OfficeOpenXml.ExcelRange _range, int _headerRow, int _columnCount)
+    {
+        Map headerColumns = new Map(Types::String, Types::String);
+        int column;
+
+        for (column = 1; column <= _columnCount; column++)
+        {
+            str header = this.cellText(_range, _headerRow, column);
+            str normalizedHeader = SCCustomerExcelImportHelper::normalizeHeader(header);
+
+            if (!normalizedHeader)
+            {
+                continue;
+            }
+
+            if (headerColumns.exists(normalizedHeader))
+            {
+                throw error(strFmt("@SCMedadLabels:DuplicateExcelHeader", header));
+            }
+
+            headerColumns.insert(normalizedHeader, int2Str(column));
+        }
+
+        return headerColumns;
+    }
+
+    private Map buildTargetColumns(Map _headerColumns)
+    {
+        SCCustomerExcelMapping mapping;
+        Map targetColumns = new Map(Types::String, Types::String);
+        Set mappedFields = new Set(Types::String);
+        int activeMappings;
+
+        while select mapping
+            order by TargetFieldName
+        {
+            str targetField = strLRTrim(mapping.TargetFieldName);
+            str excelHeader = strLRTrim(mapping.ExcelHeaderName);
+            str normalizedHeader = SCCustomerExcelImportHelper::normalizeHeader(excelHeader);
+            str columnNumber;
+
+            if (!targetField)
+            {
+                continue;
+            }
+
+            if (!SCCustomerExcelImportHelper::isImportableStagingField(targetField))
+            {
+                if (fieldName2Id(tableNum(SCAutomatedImportCustomers), targetField) == fieldNum(SCAutomatedImportCustomers, Street))
+                {
+                    continue;
+                }
+
+                throw error(strFmt("@SCMedadLabels:UnsupportedMappingField", targetField));
+            }
+
+            if (mappedFields.in(targetField))
+            {
+                throw error(strFmt("@SCMedadLabels:DuplicateTargetMapping", targetField));
+            }
+
+            mappedFields.add(targetField);
+
+            if (!normalizedHeader)
+            {
+                continue;
+            }
+
+            if (!_headerColumns.exists(normalizedHeader))
+            {
+                throw error(strFmt("@SCMedadLabels:ExcelHeaderNotFound", excelHeader));
+            }
+
+            columnNumber = _headerColumns.lookup(normalizedHeader);
+            targetColumns.insert(targetField, columnNumber);
+            activeMappings++;
+        }
+
+        if (!activeMappings)
+        {
+            throw error("@SCMedadLabels:NoActiveExcelMappings");
+        }
+
+        return targetColumns;
+    }
+
+    private boolean isEmptyRow(
+        OfficeOpenXml.ExcelRange _range,
+        int                       _row,
+        Map                       _targetColumns)
+    {
+        MapEnumerator enumerator = _targetColumns.getEnumerator();
+
+        while (enumerator.moveNext())
+        {
+            if (this.cellText(_range, _row, str2Int(enumerator.currentValue())))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private str processRow(
+        OfficeOpenXml.ExcelRange _range,
+        int                       _row,
+        Map                       _targetColumns,
+        Set                       _seenAccounts,
+        SCCustomerExcelImportRun  _importRun)
+    {
+        SCAutomatedImportCustomers customer;
+        SCAutomatedImportCustomers stagedCustomer;
+        CustTable custTable;
+        MapEnumerator enumerator;
+        boolean isValid;
+
+        enumerator = _targetColumns.getEnumerator();
+        while (enumerator.moveNext())
+        {
+            str targetField = enumerator.currentKey();
+            int column = str2Int(enumerator.currentValue());
+
+            if (column)
+            {
+                SCCustomerExcelImportHelper::setMappedValue(
+                    customer,
+                    targetField,
+                    this.cellText(_range, _row, column));
+            }
+        }
+
+        customer.Street = customer.streetInDynamics();
+        customer.ImportRunRecId = _importRun.RecId;
+        customer.SourceRowNumber = _row;
+        customer.ImportFileName = _importRun.FileName;
+
+        if (customer.Dyn365CustomerCode)
+        {
+            select firstonly RecId from custTable
+                where custTable.AccountNum == customer.Dyn365CustomerCode;
+
+            if (custTable.RecId)
+            {
+                SCCustomerExcelImportLog::createLog(
+                    _importRun.RecId,
+                    _row,
+                    customer.Dyn365CustomerCode,
+                    'Skipped',
+                    "@SCMedadLabels:CustomerAlreadyExists");
+                return 'Skipped';
+            }
+
+            select firstonly RecId from stagedCustomer
+                where stagedCustomer.ImportRunRecId == _importRun.RecId
+                   && stagedCustomer.Dyn365CustomerCode == customer.Dyn365CustomerCode;
+
+            if (_seenAccounts.in(customer.Dyn365CustomerCode) || stagedCustomer.RecId)
+            {
+                SCCustomerExcelImportLog::createLog(
+                    _importRun.RecId,
+                    _row,
+                    customer.Dyn365CustomerCode,
+                    'Skipped',
+                    "@SCMedadLabels:DuplicateCustomerInWorkbook");
+                return 'Skipped';
+            }
+
+            _seenAccounts.add(customer.Dyn365CustomerCode);
+        }
+
+        isValid = customer.validateCustomerData();
+        customer.ImportOutcome = isValid ? 'Success' : 'Validation failed';
+        customer.insert();
+
+        SCCustomerExcelImportLog::createLog(
+            _importRun.RecId,
+            _row,
+            customer.Dyn365CustomerCode,
+            customer.ImportOutcome,
+            isValid ? "@SCMedadLabels:CustomerRowImported" : customer.Status);
+
+        return customer.ImportOutcome;
+    }
+
+    private void updateRun(
+        RefRecId _runRecId,
+        str      _status,
+        int      _totalRows,
+        int      _successfulRows,
+        int      _skippedRows,
+        int      _failedRows,
+        str      _message = '')
+    {
+        SCCustomerExcelImportRun importRun;
+
+        ttsbegin;
+        importRun = SCCustomerExcelImportRun::find(_runRecId, true);
+
+        if (importRun.RecId)
+        {
+            importRun.Status = _status;
+            importRun.TotalRows = _totalRows;
+            importRun.SuccessfulRows = _successfulRows;
+            importRun.SkippedRows = _skippedRows;
+            importRun.FailedRows = _failedRows;
+            importRun.Message = subStr(_message, 1, 255);
+            importRun.update();
+        }
+
+        ttscommit;
+    }
+
+    public void process(SCCustomerExcelImportContract _contract)
+    {
+        SCCustomerExcelImportRun importRun;
+        System.IO.MemoryStream stream;
+        Map headerColumns;
+        Map targetColumns;
+        Set seenAccounts = new Set(Types::String);
+        int totalRows;
+        int successfulRows;
+        int skippedRows;
+        int failedRows;
+
+        importRun = SCCustomerExcelImportRun::find(_contract.parmImportRunRecId());
+
+        if (!importRun.RecId || !conLen(importRun.FileContent))
+        {
+            throw error("@SCMedadLabels:ImportRunFileMissing");
+        }
+
+        this.updateRun(importRun.RecId, 'Processing', 0, 0, 0, 0);
+
+        try
+        {
+            stream = Binary::constructFromContainer(importRun.FileContent).getMemoryStream();
+
+            using (OfficeOpenXml.ExcelPackage package = new OfficeOpenXml.ExcelPackage(stream))
+            {
+                OfficeOpenXml.ExcelWorksheet worksheet =
+                    package.get_Workbook().get_Worksheets().get_Item(1);
+                OfficeOpenXml.ExcelRange range;
+                int headerRow;
+                int lastRow;
+                int lastColumn;
+                int row;
+
+                if (!worksheet || !worksheet.Dimension)
+                {
+                    throw error("@SCMedadLabels:ExcelWorksheetEmpty");
+                }
+
+                range = worksheet.Cells;
+                headerRow = worksheet.Dimension.Start.Row;
+                lastRow = worksheet.Dimension.End.Row;
+                lastColumn = worksheet.Dimension.End.Column;
+                headerColumns = this.buildHeaderColumns(range, headerRow, lastColumn);
+                targetColumns = this.buildTargetColumns(headerColumns);
+
+                for (row = headerRow + 1; row <= lastRow; row++)
+                {
+                    str outcome;
+
+                    if (this.isEmptyRow(range, row, targetColumns))
+                    {
+                        continue;
+                    }
+
+                    totalRows++;
+
+                    try
+                    {
+                        ttsbegin;
+                        outcome = this.processRow(range, row, targetColumns, seenAccounts, importRun);
+                        ttscommit;
+
+                        switch (outcome)
+                        {
+                            case 'Success':
+                                successfulRows++;
+                                break;
+                            case 'Skipped':
+                                skippedRows++;
+                                break;
+                            default:
+                                failedRows++;
+                                break;
+                        }
+                    }
+                    catch
+                    {
+                        ttsabort;
+                        failedRows++;
+                        SCCustomerExcelImportLog::createLog(
+                            importRun.RecId,
+                            row,
+                            '',
+                            'Error',
+                            "@SCMedadLabels:CustomerRowImportFailed");
+                    }
+                }
+            }
+
+            this.updateRun(
+                importRun.RecId,
+                'Completed',
+                totalRows,
+                successfulRows,
+                skippedRows,
+                failedRows,
+                strFmt("@SCMedadLabels:ImportSummary", successfulRows, skippedRows, failedRows));
+        }
+        catch (Exception::CLRError)
+        {
+            System.Exception clrException = CLRInterop::getLastException();
+            str message = clrException ? clrException.ToString() : "@SCMedadLabels:ImportFailed";
+            this.updateRun(importRun.RecId, 'Failed', totalRows, successfulRows, skippedRows, failedRows, message);
+            throw error(message);
+        }
+        catch
+        {
+            this.updateRun(importRun.RecId, 'Failed', totalRows, successfulRows, skippedRows, failedRows, "@SCMedadLabels:ImportFailed");
+            throw;
+        }
+    }
+
+}
