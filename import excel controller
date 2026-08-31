@@ -1,0 +1,97 @@
+using System.IO;
+
+public class SCCustomerExcelImportController extends SysOperationServiceController
+{
+    public static SCCustomerExcelImportController construct(Args _args = null)
+    {
+        SCCustomerExcelImportController controller = new SCCustomerExcelImportController(
+            classStr(SCCustomerExcelImportService),
+            methodStr(SCCustomerExcelImportService, process),
+            SysOperationExecutionMode::Synchronous);
+
+        controller.parmArgs(_args);
+        controller.parmLoadFromSysLastValue(false);
+        return controller;
+    }
+
+    public static void main(Args _args)
+    {
+        SCCustomerExcelImportController::construct(_args).startOperation();
+    }
+
+    public str defaultCaption()
+    {
+        return "@SCMedadLabels:ImportCustomerExcel";
+    }
+
+    protected boolean uploadExcelFile(SCCustomerExcelImportContract _contract)
+    {
+        Dialog uploadDialog;
+        DialogGroup dlgUploadGroup;
+        FileUploadBuild fileUploadBuild;
+        FormBuildControl formBuildControl;
+        FileUpload fileUploadControl;
+        FileUploadTemporaryStorageResult fileUploadResult;
+        System.IO.Stream sourceStream;
+        System.IO.MemoryStream memoryStream;
+        SCCustomerExcelImportRun importRun;
+
+        if (_contract.parmImportRunRecId())
+        {
+            return true;
+        }
+
+        uploadDialog = new Dialog("@SCMedadLabels:ImportCustomerExcel");
+        dlgUploadGroup = uploadDialog.addGroup("@SCMedadLabels:SelectExcelFile");
+        formBuildControl = uploadDialog.formBuildDesign().control(dlgUploadGroup.name());
+        fileUploadBuild = formBuildControl.addControlEx(classStr(FileUpload), 'SCCustomerExcelUpload');
+        fileUploadBuild.style(FileUploadStyle::MinimalWithFilename);
+        fileUploadBuild.fileTypesAccepted('.xlsx');
+
+        if (!uploadDialog.run() || !uploadDialog.closedOk())
+        {
+            return false;
+        }
+
+        fileUploadControl = uploadDialog.formRun().control(uploadDialog.formRun().controlId('SCCustomerExcelUpload'));
+        fileUploadResult = fileUploadControl.getFileUploadResult();
+
+        if (!fileUploadResult || !fileUploadResult.getUploadStatus())
+        {
+            throw error("@SCMedadLabels:ExcelFileRequired");
+        }
+
+        sourceStream = fileUploadResult.openResult();
+        memoryStream = new System.IO.MemoryStream();
+        sourceStream.CopyTo(memoryStream);
+        memoryStream.Position = 0;
+
+        importRun.FileName = fileUploadControl.fileName();
+        importRun.FileContent = Binary::constructFromMemoryStream(memoryStream).getContainer();
+        importRun.Status = 'Waiting';
+        importRun.insert();
+
+        _contract.parmImportRunRecId(importRun.RecId);
+        return true;
+    }
+
+    public SysOperationStartResult startOperation()
+    {
+        SCCustomerExcelImportContract contract;
+        SCCustomerExcelImportService service;
+
+        contract = this.getDataContractInfoObject().dataContractObject() as SCCustomerExcelImportContract;
+
+        if (!this.uploadExcelFile(contract))
+        {
+            return SysOperationStartResult::Canceled;
+        }
+
+        this.parmShowDialog(false);
+        service = new SCCustomerExcelImportService();
+        service.process(contract);
+
+        return SysOperationStartResult::Started;
+    }
+
+}
