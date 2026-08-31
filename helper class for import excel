@@ -1,0 +1,93 @@
+public final class SCCustomerExcelImportHelper
+{
+    public static boolean isImportableStagingField(str _fieldName)
+    {
+        FieldId fieldId = fieldName2Id(tableNum(SCAutomatedImportCustomers), _fieldName);
+        DictField dictField;
+
+        if (!fieldId)
+        {
+            return false;
+        }
+
+        dictField = new DictField(tableNum(SCAutomatedImportCustomers), fieldId);
+
+        if (!dictField || dictField.isSystem() || !dictField.isSql())
+        {
+            return false;
+        }
+
+        return !SCCustomerExcelImportHelper::isExcludedStagingField(fieldId);
+    }
+
+    private static boolean isExcludedStagingField(FieldId _fieldId)
+    {
+        switch (_fieldId)
+        {
+            case fieldNum(SCAutomatedImportCustomers, Status):
+            case fieldNum(SCAutomatedImportCustomers, ImportRunRecId):
+            case fieldNum(SCAutomatedImportCustomers, SourceRowNumber):
+            case fieldNum(SCAutomatedImportCustomers, ImportOutcome):
+            case fieldNum(SCAutomatedImportCustomers, ImportFileName):
+            case fieldNum(SCAutomatedImportCustomers, CreationStatus):
+            case fieldNum(SCAutomatedImportCustomers, CreationMessage):
+            case fieldNum(SCAutomatedImportCustomers, Street):
+                return true;
+        }
+
+        return false;
+    }
+
+    public static void lookupStagingFields(FormStringControl _control)
+    {
+        TmpSysTableField tmpField;
+        DictTable dictTable = new DictTable(tableNum(SCAutomatedImportCustomers));
+        DictField dictField;
+        FieldId fieldId = dictTable.fieldNext(0);
+        SysTableLookup lookup = SysTableLookup::newParameters(tableNum(TmpSysTableField), _control);
+
+        while (fieldId)
+        {
+            str fieldName = fieldId2Name(tableNum(SCAutomatedImportCustomers), fieldId);
+
+            if (SCCustomerExcelImportHelper::isImportableStagingField(fieldName))
+            {
+                dictField = new DictField(tableNum(SCAutomatedImportCustomers), fieldId);
+
+                tmpField.clear();
+                tmpField.DictTableId = tableNum(SCAutomatedImportCustomers);
+                tmpField.FieldName = fieldName;
+                tmpField.FieldLabel = dictField.label();
+                tmpField.insert();
+            }
+
+            fieldId = dictTable.fieldNext(fieldId);
+        }
+
+        lookup.addLookupfield(fieldNum(TmpSysTableField, FieldName), true);
+        lookup.addLookupfield(fieldNum(TmpSysTableField, FieldLabel));
+        lookup.parmTmpBuffer(tmpField);
+        lookup.performFormLookup();
+    }
+
+    public static str normalizeHeader(str _header)
+    {
+        return strLwr(strLRTrim(_header));
+    }
+
+    public static void setMappedValue(
+        SCAutomatedImportCustomers _customer,
+        str                        _fieldName,
+        str                        _value)
+    {
+        FieldId fieldId = fieldName2Id(tableNum(SCAutomatedImportCustomers), _fieldName);
+
+        if (!fieldId || !SCCustomerExcelImportHelper::isImportableStagingField(_fieldName))
+        {
+            throw error(strFmt("@SCMedadLabels:UnsupportedMappingField", _fieldName));
+        }
+
+        _customer.(fieldId) = _value;
+    }
+
+}
