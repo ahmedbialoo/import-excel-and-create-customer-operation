@@ -1,0 +1,271 @@
+public class SCAutomatedImportCustomers extends common
+{
+    #define.VATNumberLength(15)
+    #define.VATNumberPrefix('3')
+    #define.CRNumberLength(10)
+    /// <summary>
+    /// Determines whether the VAT number of the current record is accepted by Dynamics 365.
+    /// </summary>
+    /// <returns>
+    /// true if the VAT number starts with 3 and contains exactly 15 characters; otherwise, false.
+    /// </returns>
+    public boolean isValidVATNumber()
+    {
+        return strLen(this.VATNumber) == #VATNumberLength
+            && subStr(this.VATNumber, 1, 1) == #VATNumberPrefix;
+    }
+
+    /// <summary>
+    /// Determines whether the commercial registration number of the current record is accepted by Dynamics 365.
+    /// </summary>
+    /// <returns>true if the CR number contains exactly 10 characters; otherwise, false.</returns>
+    public boolean isValidCRNumber()
+    {
+        return strLen(this.CRNumber) == #CRNumberLength;
+    }
+
+    /// <summary>
+    /// Determines whether the email address of the current record has a valid format.
+    /// </summary>
+    /// <returns>
+    /// true if the value contains a local part, an @ sign, and a domain with a dot; otherwise, false.
+    /// </returns>
+    public boolean isValidEmail()
+    {
+        const str emailPattern = @"^[^@\s]+@[^@\s]+\.[^@\s]+$";
+        boolean isValidEmail;
+
+        if (!this.Email)
+        {
+            return false;
+        }
+
+        try
+        {
+            isValidEmail = System.Text.RegularExpressions.Regex::IsMatch(
+                this.Email,
+                emailPattern,
+                System.Text.RegularExpressions.RegexOptions::IgnoreCase,
+                System.TimeSpan::FromMilliseconds(250));
+        }
+        catch
+        {
+            isValidEmail = false;
+        }
+
+        return isValidEmail;
+    }
+
+    /// <summary>
+    /// Returns the staging street that is transferred to Dynamics 365.
+    /// </summary>
+    /// <returns>The street built from address 1 and address 2.</returns>
+    display LogisticsAddressStreet combinedStreet()
+    {
+        return this.Street ? this.Street : this.streetInDynamics();
+    }
+
+    /// <summary>
+    /// Builds the Dynamics 365 street value from street 1 and street 2.
+    /// </summary>
+    /// <returns>Address 1 and address 2 concatenated and separated by a single space.</returns>
+    public LogisticsAddressStreet streetInDynamics()
+    {
+        container parts;
+
+        if (this.Address1)
+        {
+            parts += this.Address1;
+        }
+
+        if (this.Address2)
+        {
+            parts += this.Address2;
+        }
+
+        return con2Str(parts, ' ');
+    }
+
+    /// <summary>
+    /// Sets the staging street from address 1 and address 2.
+    /// </summary>
+    public void applyStreetFromAddresses()
+    {
+        this.Street = this.streetInDynamics();
+    }
+
+    /// <summary>
+    /// Determines whether the staged customer has already been created in <c>CustTable</c>.
+    /// </summary>
+    /// <returns>true if the creation status is Created; otherwise, false.</returns>
+    public boolean isCustomerCreated()
+    {
+        return this.CreationStatus == SCCustomerCreationStatus::Created;
+    }
+
+    public void modifiedField(FieldId _fieldId)
+    {
+        super(_fieldId);
+
+        switch (_fieldId)
+        {
+            case fieldNum(SCAutomatedImportCustomers, Address1):
+            case fieldNum(SCAutomatedImportCustomers, Address2):
+                this.applyStreetFromAddresses();
+                break;
+        }
+    }
+
+    public void insert()
+    {
+        this.applyStreetFromAddresses();
+        super();
+    }
+
+    public void update()
+    {
+        if (!this.isCustomerCreated())
+        {
+            this.applyStreetFromAddresses();
+        }
+
+        super();
+    }
+
+    public boolean allowEdit()
+    {
+        return !this.isCustomerCreated();
+    }
+
+    public boolean validateWrite()
+    {
+        boolean ret = super();
+
+        if (ret && this.orig().isCustomerCreated())
+        {
+            ret = checkFailed("@SCMedadLabels:CreatedCustomerRecordReadOnly");
+        }
+
+        return ret;
+    }
+
+    /// <summary>
+    /// Validates the imported customer data and reports the outcome through the <c>Status</c> field.
+    /// </summary>
+    /// <returns>true if the record passed every validation; otherwise, false.</returns>
+    /// <remarks>
+    /// The record is not written to the database, the caller is responsible for persisting the status.
+    /// </remarks>
+    public boolean validateCustomerData()
+    {
+        List messages = new List(Types::String);
+
+        if (!this.Dyn365CustomerCode)
+        {
+            messages.addEnd(strFmt("@SCMedadLabels:MandatoryFieldEmpty", "@SCMedadLabels:Dyn365CustomerCode"));
+        }
+
+        if (!this.ClientName)
+        {
+            messages.addEnd(strFmt("@SCMedadLabels:MandatoryFieldEmpty", "@SCMedadLabels:ClientName"));
+        }
+
+        if (!this.Address1)
+        {
+            messages.addEnd(strFmt("@SCMedadLabels:MandatoryFieldEmpty", "@SCMedadLabels:Address1"));
+        }
+
+        if (!this.Address2)
+        {
+            messages.addEnd(strFmt("@SCMedadLabels:MandatoryFieldEmpty", "@SCMedadLabels:Address2"));
+        }
+
+        if (!this.Email)
+        {
+            messages.addEnd(strFmt("@SCMedadLabels:MandatoryFieldEmpty", "@SCMedadLabels:Email"));
+        }
+        else if (!this.isValidEmail())
+        {
+            messages.addEnd("@SCMedadLabels:EmailValidation");
+        }
+
+        if (!this.Street)
+        {
+            messages.addEnd(strFmt("@SCMedadLabels:MandatoryFieldEmpty", "@SCMedadLabels:Street"));
+        }
+
+        if (!this.isValidVATNumber())
+        {
+            messages.addEnd("@SCMedadLabels:VATNumberValidation");
+        }
+
+        if (!this.isValidCRNumber())
+        {
+            messages.addEnd("@SCMedadLabels:CRNumberValidation");
+        }
+
+        if (messages.empty())
+        {
+            this.Status = 'Valid';
+        }
+        else
+        {
+            this.Status = con2Str(list2Con(messages), '\n');
+        }
+
+        return messages.empty();
+    }
+
+    public boolean validateField(FieldId _fieldIdToCheck)
+    {
+        boolean ret = super(_fieldIdToCheck);
+
+        if (ret)
+        {
+            switch (_fieldIdToCheck)
+            {
+                case fieldNum(SCAutomatedImportCustomers, VATNumber):
+                    if (this.VATNumber && !this.isValidVATNumber())
+                    {
+                        ret = checkFailed("@SCMedadLabels:VATNumberValidation");
+                    }
+                    break;
+
+                case fieldNum(SCAutomatedImportCustomers, Email):
+                    if (this.Email && !this.isValidEmail())
+                    {
+                        ret = checkFailed("@SCMedadLabels:EmailValidation");
+                    }
+                    break;
+            }
+        }
+
+        return ret;
+    }
+
+    /// <summary>
+    /// Finds the staged customer of the given Dynamics 365 customer account.
+    /// </summary>
+    /// <param name = "_customerCode">The Dynamics 365 customer account to look up.</param>
+    /// <param name = "_forUpdate">true if the record should be selected for update; otherwise, false.</param>
+    /// <returns>
+    /// The <c>SCAutomatedImportCustomers</c> record of <paramref name="_customerCode"/>,
+    /// or an empty buffer when the customer is not staged.
+    /// </returns>
+    public static SCAutomatedImportCustomers findByCustomerCode(
+        CustAccount _customerCode,
+        boolean     _forUpdate = false)
+    {
+        SCAutomatedImportCustomers automatedImportCustomers;
+
+        if (_customerCode)
+        {
+            automatedImportCustomers.selectForUpdate(_forUpdate);
+            select firstonly automatedImportCustomers
+                where automatedImportCustomers.Dyn365CustomerCode == _customerCode;
+        }
+
+        return automatedImportCustomers;
+    }
+
+}
