@@ -1,0 +1,68 @@
+[Form]
+public class SCAutomatedImportCustomers extends FormRun
+{
+    [DataSource]
+    class SCAutomatedImportCustomers
+    {
+        public int active()
+        {
+            boolean canMaintain = !SCAutomatedImportCustomers.isCustomerCreated();
+            int ret = super();
+
+            CreateCustomersButton.enabled(canMaintain);
+            ValidateButton.enabled(canMaintain);
+            this.allowEdit(canMaintain);
+
+            return ret;
+        }
+
+    }
+
+    [Control("Button")]
+    class ValidateButton
+    {
+        /// <summary>
+        /// Revalidates the selected customer, then re-executes the datasource query
+        /// with a filter that keeps only new customers.
+        /// </summary>
+        public void clicked()
+        {
+            super();
+
+            SCCustomerValidate::validateRecord(SCAutomatedImportCustomers.RecId);
+            SCAutomatedImportCustomers_ds.reread();
+            SCAutomatedImportCustomers_ds.refresh();
+        }
+
+    }
+
+    [Control("Button")]
+    class ImportExcelButton
+    {
+        public void clicked()
+        {
+            super();
+            new MenuFunction(menuItemActionStr(SCCustomerExcelImport), MenuItemType::Action).run();
+            SCAutomatedImportCustomers_ds.research(true);
+        }
+
+    }
+
+    [Control("Button")]
+    class CreateCustomersButton
+    {
+        public void clicked()
+        {
+            Args args = new Args();
+
+            super();
+
+            args.record(SCAutomatedImportCustomers);
+            args.caller(element);
+            new MenuFunction(menuItemActionStr(SCCustomerCreate), MenuItemType::Action).run(args);
+            SCAutomatedImportCustomers_ds.research(true);
+        }
+
+    }
+
+}
